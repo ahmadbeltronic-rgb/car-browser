@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111318">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Car Browser">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <title>Car Browser</title>
+  <style>
+    :root { color-scheme:dark; --bg:#111318; --panel:#20242c; --muted:#aab2c0; --blue:#4d8dff; }
+    * { box-sizing:border-box }
+    body { margin:0; background:var(--bg); color:#fff; font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:100vh; padding:env(safe-area-inset-top) 18px env(safe-area-inset-bottom); }
+    header { display:flex; align-items:center; justify-content:space-between; padding:22px 2px 18px; }
+    h1 { margin:0; font-size:27px; letter-spacing:-.5px; }
+    .sub { color:var(--muted); font-size:13px; margin-top:4px }
+    button { border:0; color:white; cursor:pointer; font:inherit; }
+    .add { width:48px;height:48px;border-radius:16px;background:#293344;font-size:28px; }
+    .search { display:flex; gap:8px; padding:8px; background:var(--panel); border-radius:18px; margin:10px 0 28px; }
+    input { min-width:0; flex:1; background:transparent; border:0; outline:0; color:white; font:inherit; padding:10px 8px; }
+    .go { background:var(--blue); border-radius:13px; padding:0 17px; font-weight:700; }
+    h2 { font-size:19px; margin:0 0 15px; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; }
+    .tile { min-height:130px; border-radius:21px; padding:17px 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center; background:#303744; }
+    .tile:active { transform:scale(.98); }
+    .tile .emoji { font-size:38px; line-height:1; }
+    .tile .name { font-weight:650; font-size:16px; overflow-wrap:anywhere; }
+    .tile.youtube { background:#d9231b; }
+    .tile.google { background:#285fba; }
+    .tile.wiki { background:#454b56; }
+    .tile.addtile { background:#293344; border:1px dashed #68758a; }
+    .note { margin-top:24px; padding:15px; border-radius:16px; background:var(--panel); color:#c5ccd7; font-size:13px; line-height:1.5; }
+    .note strong { color:white; }
+    dialog { width:min(92vw,420px); border:1px solid #424b5a; border-radius:20px; padding:20px; background:#20242c; color:white; }
+    dialog::backdrop { background:#000a; }
+    dialog h3 { margin:0 0 15px; }
+    .field { display:block; width:100%; margin:10px 0; padding:14px; border-radius:12px; background:#111318; border:1px solid #424b5a; }
+    .actions { display:flex; justify-content:flex-end; gap:9px; margin-top:16px; }
+    .secondary { background:#3b4350; padding:12px 15px; border-radius:12px; }
+    .primary { background:var(--blue); padding:12px 15px; border-radius:12px; font-weight:700; }
+    .small { color:var(--muted); font-size:12px; margin-top:14px; }
+    @media (min-width:650px) { body { max-width:760px; margin:auto; } .grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>Car Browser</h1><div class="sub">Deine Webseiten auf einen Blick</div></div>
+    <button class="add" id="addTop" aria-label="Favorit hinzufügen">＋</button>
+  </header>
+
+  <form class="search" id="searchForm">
+    <input id="address" autocomplete="url" placeholder="Website oder Suchbegriff eingeben" aria-label="Website oder Suchbegriff">
+    <button class="go" type="submit">Los</button>
+  </form>
+
+  <h2>Meine Favoriten</h2>
+  <main class="grid" id="favorites"></main>
+
+  <div class="note">
+    <strong>Bitte sicher bleiben:</strong> Videos nur ansehen, wenn das Fahrzeug sicher geparkt ist.
+    Diese Web-App ist für das iPhone gedacht und wird nicht automatisch in Apple CarPlay angezeigt.
+  </div>
+
+  <dialog id="favoriteDialog">
+    <form id="favoriteForm">
+      <h3>Favorit hinzufügen</h3>
+      <input class="field" id="favName" placeholder="Name, z. B. Nachrichten" required maxlength="30">
+      <input class="field" id="favUrl" placeholder="Adresse, z. B. https://example.com" required inputmode="url">
+      <div class="actions">
+        <button type="button" class="secondary" id="cancel">Abbrechen</button>
+        <button class="primary" type="submit">Speichern</button>
+      </div>
+      <div class="small">Deine eigenen Favoriten werden auf diesem Gerät gespeichert.</div>
+    </form>
+  </dialog>
+
+<script>
+const defaults = [
+  {name:"YouTube",url:"https://www.youtube.com",emoji:"▶️",kind:"youtube"},
+  {name:"Google",url:"https://www.google.com",emoji:"🔎",kind:"google"},
+  {name:"Wikipedia",url:"https://www.wikipedia.org",emoji:"📖",kind:"wiki"}
+];
+const storeKey = "car-browser-favorites-v1";
+const grid = document.getElementById("favorites");
+const dialog = document.getElementById("favoriteDialog");
+const form = document.getElementById("favoriteForm");
+
+function normalize(value) {
+  let v = value.trim();
+  if (!v) return "";
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
+    if (v.includes(" ") || (!v.includes(".") && v.toLowerCase() !== "localhost")) {
+      return "https://www.google.com/search?q=" + encodeURIComponent(v);
+    }
+    v = "https://" + v;
+  }
+  try {
+    const u = new URL(v);
+    return ["http:","https:"].includes(u.protocol) ? u.href : "";
+  } catch { return ""; }
+}
+function loadCustom() {
+  try { return JSON.parse(localStorage.getItem(storeKey) || "[]"); }
+  catch { return []; }
+}
+function saveCustom(items) { localStorage.setItem(storeKey, JSON.stringify(items)); }
+function openUrl(url) { window.location.href = url; }
+
+function render() {
+  grid.replaceChildren();
+  const items = [...defaults, ...loadCustom()];
+  items.forEach(item => {
+    const a = document.createElement("a");
+    a.className = "tile " + (item.kind || "");
+    a.href = item.url;
+    a.setAttribute("aria-label", "Öffne " + item.name);
+    const emoji = document.createElement("span");
+    emoji.className = "emoji";
+    emoji.textContent = item.emoji || "🌐";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = item.name;
+    a.append(emoji, name);
+    grid.append(a);
+  });
+  const add = document.createElement("button");
+  add.className = "tile addtile";
+  add.innerHTML = '<span class="emoji">＋</span><span class="name">Favorit hinzufügen</span>';
+  add.addEventListener("click", showDialog);
+  grid.append(add);
+}
+function showDialog() {
+  form.reset();
+  dialog.showModal();
+  document.getElementById("favName").focus();
+}
+document.getElementById("addTop").addEventListener("click", showDialog);
+document.getElementById("cancel").addEventListener("click", () => dialog.close());
+form.addEventListener("submit", e => {
+  e.preventDefault();
+  const name = document.getElementById("favName").value.trim();
+  const url = normalize(document.getElementById("favUrl").value);
+  if (!name || !url) {
+    alert("Bitte einen gültigen Namen und eine http(s)-Adresse eingeben.");
+    return;
+  }
+  const custom = loadCustom();
+  custom.push({name, url, emoji:"🌐"});
+  saveCustom(custom);
+  dialog.close();
+  render();
+});
+document.getElementById("searchForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const url = normalize(document.getElementById("address").value);
+  if (url) openUrl(url);
+});
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+}
+render();
+</script>
+</body>
+</html>
